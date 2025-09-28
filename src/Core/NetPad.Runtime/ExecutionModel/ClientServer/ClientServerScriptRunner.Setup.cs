@@ -97,6 +97,7 @@ public partial class ClientServerScriptRunner
         {
             DeployScriptHostExecutable(_workingDirectory);
         }
+
         await DeploySharedDependenciesAsync(_workingDirectory, dependencies);
         var (scriptDir, scriptAssemblyFilePath) = await DeployScriptDependenciesAsync(
             compilationResult.AssemblyBytes,
@@ -114,9 +115,20 @@ public partial class ClientServerScriptRunner
         );
     }
 
+    private (List<Dependency> dependencies, SourceCodeCollection additionalCode) dependencyCache = default;
+    private string? _lastDependencyCacheKey;
+
     private async Task<(List<Dependency> dependencies, SourceCodeCollection additionalCode)> GatherDependenciesAsync(
         CancellationToken cancellationToken)
     {
+        // Generate cache key based on all factors that could affect dependencies
+        var cacheKey = GenerateDependencyCacheKey();
+        
+        if (dependencyCache != default && _lastDependencyCacheKey == cacheKey)
+        {
+            return dependencyCache;
+        }
+
         var dependencies = new List<Dependency>();
         var additionalCode = new SourceCodeCollection();
 
@@ -166,16 +178,93 @@ public partial class ClientServerScriptRunner
             return (dependencies, additionalCode);
         }
 
-        Task.WaitAll(dependencies
-                .Select(d => d.LoadAssetsAsync(
-                    _script.Config.TargetFrameworkVersion,
-                    _packageProvider,
-                    cancellationToken))
-                .ToArray(),
-            cancellationToken
-        );
+        // 优化：使用Task.WhenAll实现真正异步并发处理
+        await Task.WhenAll(dependencies
+            .Select(d => d.LoadAssetsAsync(
+                _script.Config.TargetFrameworkVersion,
+                _packageProvider,
+                cancellationToken)));
 
-        return (dependencies, additionalCode);
+        _lastDependencyCacheKey = cacheKey;
+        return dependencyCache = (dependencies, additionalCode);
+    }
+
+    /// <summary>
+    /// Generates a cache key based on all factors that could affect dependency resolution.
+    /// This ensures the cache is invalidated when any dependency-affecting property changes.
+    /// </summary>
+    private string GenerateDependencyCacheKey()
+    {
+        unchecked // Overflow is fine, just wrap
+        {
+            int hash = 17;
+            
+            // Script references
+            foreach (var reference in _script.Config.References.OrderBy(r => r.ToString()))
+            {
+                hash = hash * 23 + reference.GetHashCode();
+            }
+            
+            // Data connection
+            if (_script.DataConnection != null)
+            {
+                hash = hash * 23 + _script.DataConnection.GetHashCode();
+            }
+            
+            // Target framework version
+            hash = hash * 23 + _script.Config.TargetFrameworkVersion.GetHashCode();
+            
+            // UseAspNet setting (affects runtime configuration)
+            hash = hash * 23 + _script.Config.UseAspNet.GetHashCode();
+            
+            return hash.ToString();
+        }
+    }
+
+    /// <summary>
+    /// 优化：批量预取NuGet包依赖信息，减少网络请求次数
+    /// </summary>
+    private async Task<Dictionary<string, bool>> BatchCheckPackageInstallationAsync(
+        IEnumerable<PackageReference> packageReferences,
+        CancellationToken cancellationToken)
+    {
+        var results = new Dictionary<string, bool>();
+        
+        // 并行检查所有包的安装状态
+        var checkTasks = packageReferences.Select(async pkg =>
+        {
+            var key = $"{pkg.PackageId}:{pkg.Version}";
+            var installInfo = await _packageProvider.GetPackageInstallInfoAsync(pkg.PackageId, pkg.Version);
+            return new { Key = key, IsInstalled = installInfo != null };
+        });
+
+        var checkResults = await Task.WhenAll(checkTasks);
+        
+        foreach (var result in checkResults)
+        {
+            results[result.Key] = result.IsInstalled;
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// 优化：并行安装缺失的NuGet包
+    /// </summary>
+    private async Task BatchInstallMissingPackagesAsync(
+        IEnumerable<PackageReference> missingPackages,
+        CancellationToken cancellationToken)
+    {
+        if (!missingPackages.Any()) return;
+
+        // 并行安装所有缺失的包
+        var installTasks = missingPackages.Select(pkg =>
+            _packageProvider.InstallPackageAsync(
+                pkg.PackageId,
+                pkg.Version,
+                _script.Config.TargetFrameworkVersion));
+
+        await Task.WhenAll(installTasks);
     }
 
     private async Task<(SourceCodeCollection Code, IReadOnlyList<Reference> References, AssemblyImage? Assembly)>
