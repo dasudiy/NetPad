@@ -1,5 +1,6 @@
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using NetPad.Common;
@@ -118,12 +119,45 @@ public partial class ClientServerScriptRunner
     private (List<Dependency> dependencies, SourceCodeCollection additionalCode) dependencyCache = default;
     private string? _lastDependencyCacheKey;
 
+    /// <summary>
+    /// Cached package dependency data for individual NuGet packages
+    /// </summary>
+    private record CachedPackageDependencies(
+        string PackageId,
+        string Version,
+        List<string> AssetPaths,
+        List<string> TransitiveDependencies, // List of "PackageId:Version" strings
+        DateTime CachedAt,
+        string CacheVersion = "v2");
+
+    /// <summary>
+    /// Cached data connection resources
+    /// </summary>
+    private record CachedDataConnectionInfo(
+        string DataConnectionHash,
+        string TargetFramework,
+        List<string> AdditionalCode,
+        List<DependencyResolutionData> References,
+        bool HasAssembly,
+        DateTime CachedAt);
+
+    /// <summary>
+    /// Serializable dependency data for caching
+    /// </summary>
+    private record DependencyResolutionData(
+        string ReferenceType,
+        string ReferenceData,
+        string NeededBy,
+        string LoadStrategy,
+        List<string> AssetPaths);
+
     private async Task<(List<Dependency> dependencies, SourceCodeCollection additionalCode)> GatherDependenciesAsync(
         CancellationToken cancellationToken)
     {
         // Generate cache key based on all factors that could affect dependencies
         var cacheKey = GenerateDependencyCacheKey();
         
+        // Check memory cache first
         if (dependencyCache != default && _lastDependencyCacheKey == cacheKey)
         {
             return dependencyCache;
@@ -132,8 +166,19 @@ public partial class ClientServerScriptRunner
         var dependencies = new List<Dependency>();
         var additionalCode = new SourceCodeCollection();
 
-        // Add script references
-        dependencies.AddRange(_script.Config.References
+        // Add script references with intelligent package caching
+        var packageReferences = _script.Config.References.OfType<PackageReference>().ToList();
+        var otherReferences = _script.Config.References.Where(r => !(r is PackageReference)).ToList();
+
+        // Handle package references with per-package caching
+        if (packageReferences.Any())
+        {
+            var packageDependencies = await LoadPackageDependenciesWithCacheAsync(packageReferences, cancellationToken);
+            dependencies.AddRange(packageDependencies);
+        }
+
+        // Handle other references normally
+        dependencies.AddRange(otherReferences
             .Select(x => new Dependency(x, NeededBy.Script, LoadStrategy.LoadInPlace)));
 
         if (cancellationToken.IsCancellationRequested)
@@ -141,26 +186,26 @@ public partial class ClientServerScriptRunner
             return (dependencies, additionalCode);
         }
 
-        // Add data connection resources
+        // Add data connection resources with caching
         if (_script.DataConnection != null)
         {
-            var dcResources = await GetDataConnectionResourcesAsync(_script.DataConnection);
+            var (dcCode, dcReferences, dcAssembly) = await GetDataConnectionResourcesWithCacheAsync(_script.DataConnection);
 
-            if (dcResources.Code.Count > 0)
+            if (dcCode.Count > 0)
             {
-                additionalCode.AddRange(dcResources.Code);
+                additionalCode.AddRange(dcCode);
             }
 
-            if (dcResources.References.Count > 0)
+            if (dcReferences.Count > 0)
             {
-                dependencies.AddRange(dcResources.References
+                dependencies.AddRange(dcReferences
                     .Select(x => new Dependency(x, NeededBy.Shared, LoadStrategy.DeployAndLoad)));
             }
 
-            if (dcResources.Assembly != null)
+            if (dcAssembly != null)
             {
                 dependencies.Add(
-                    new Dependency(new AssemblyImageReference(dcResources.Assembly), NeededBy.Shared,
+                    new Dependency(new AssemblyImageReference(dcAssembly), NeededBy.Shared,
                         LoadStrategy.DeployAndLoad));
             }
         }
@@ -178,12 +223,16 @@ public partial class ClientServerScriptRunner
             return (dependencies, additionalCode);
         }
 
-        // 优化：使用Task.WhenAll实现真正异步并发处理
-        await Task.WhenAll(dependencies
-            .Select(d => d.LoadAssetsAsync(
-                _script.Config.TargetFrameworkVersion,
-                _packageProvider,
-                cancellationToken)));
+        // Load assets for non-package dependencies
+        var nonPackageDeps = dependencies.Where(d => !(d.Reference is PackageReference)).ToList();
+        if (nonPackageDeps.Any())
+        {
+            await Task.WhenAll(nonPackageDeps
+                .Select(d => d.LoadAssetsAsync(
+                    _script.Config.TargetFrameworkVersion,
+                    _packageProvider,
+                    cancellationToken)));
+        }
 
         _lastDependencyCacheKey = cacheKey;
         return dependencyCache = (dependencies, additionalCode);
@@ -265,6 +314,306 @@ public partial class ClientServerScriptRunner
                 _script.Config.TargetFrameworkVersion));
 
         await Task.WhenAll(installTasks);
+    }
+
+    /// <summary>
+    /// Load package dependencies with per-package caching
+    /// </summary>
+    private async Task<List<Dependency>> LoadPackageDependenciesWithCacheAsync(
+        List<PackageReference> packageReferences,
+        CancellationToken cancellationToken)
+    {
+        var dependencies = new List<Dependency>();
+        var uncachedPackages = new List<PackageReference>();
+
+        // Try to load from per-package cache first
+        foreach (var pkg in packageReferences)
+        {
+            var cachedDep = await TryLoadCachedPackageDependencyAsync(pkg);
+            if (cachedDep != null)
+            {
+                dependencies.Add(cachedDep);
+            }
+            else
+            {
+                uncachedPackages.Add(pkg);
+            }
+        }
+
+        // Load uncached packages and save to cache
+        if (uncachedPackages.Any())
+        {
+            var uncachedDependencies = uncachedPackages
+                .Select(x => new Dependency(x, NeededBy.Script, LoadStrategy.LoadInPlace))
+                .ToList();
+
+            await Task.WhenAll(uncachedDependencies
+                .Select(d => d.LoadAssetsAsync(
+                    _script.Config.TargetFrameworkVersion,
+                    _packageProvider,
+                    cancellationToken)));
+
+            // Cache each package dependency separately
+            foreach (var dep in uncachedDependencies)
+            {
+                if (dep.Reference is PackageReference pkg)
+                {
+                    await SavePackageDependencyToCacheAsync(pkg, dep);
+                }
+            }
+
+            dependencies.AddRange(uncachedDependencies);
+        }
+
+        return dependencies;
+    }
+
+    /// <summary>
+    /// Get data connection resources with caching
+    /// </summary>
+    private async Task<(SourceCodeCollection Code, IReadOnlyList<Reference> References, AssemblyImage? Assembly)>
+        GetDataConnectionResourcesWithCacheAsync(DataConnection dataConnection)
+    {
+        var dcHash = dataConnection.GetHashCode().ToString();
+        var targetFramework = _script.Config.TargetFrameworkVersion.ToString();
+        
+        // Try to load from cache first
+        var cachedDc = await TryLoadCachedDataConnectionAsync(dcHash, targetFramework);
+        if (cachedDc != null)
+        {
+            var code = new SourceCodeCollection();
+            foreach (var codeStr in cachedDc.AdditionalCode)
+            {
+                code.Add(new NetPad.DotNet.CodeAnalysis.SourceCode(codeStr));
+            }
+
+            var references = new List<Reference>();
+            foreach (var refData in cachedDc.References)
+            {
+                var reference = DeserializeReference(refData.ReferenceType, refData.ReferenceData);
+                if (reference != null)
+                {
+                    references.Add(reference);
+                }
+            }
+
+            return (code, references, cachedDc.HasAssembly ? null : null); // Assembly cannot be cached
+        }
+
+        // Load fresh data and cache it
+        var result = await GetDataConnectionResourcesAsync(dataConnection);
+        await SaveDataConnectionToCacheAsync(dcHash, targetFramework, result);
+        return result;
+    }
+
+    /// <summary>
+    /// Gets the file path for caching package dependency data
+    /// </summary>
+    private string GetPackageCacheFilePath(string packageId, string version)
+    {
+        var cacheDir = Path.Combine(_settings.PackageCacheDirectoryPath, "PackageDependencies");
+        Directory.CreateDirectory(cacheDir);
+        var fileName = $"{packageId.ToLowerInvariant()}-{version.ToLowerInvariant()}.json";
+        return Path.Combine(cacheDir, fileName);
+    }
+
+    /// <summary>
+    /// Gets the file path for caching data connection resources
+    /// </summary>
+    private string GetDataConnectionCacheFilePath(string dcHash, string targetFramework)
+    {
+        var cacheDir = Path.Combine(_settings.PackageCacheDirectoryPath, "DataConnections");
+        Directory.CreateDirectory(cacheDir);
+        return Path.Combine(cacheDir, $"{dcHash}-{targetFramework}.json");
+    }
+
+    /// <summary>
+    /// Try to load cached package dependency
+    /// </summary>
+    private async Task<Dependency?> TryLoadCachedPackageDependencyAsync(PackageReference packageRef)
+    {
+        try
+        {
+            var cacheFile = GetPackageCacheFilePath(packageRef.PackageId, packageRef.Version);
+            if (!File.Exists(cacheFile))
+                return null;
+
+            var json = await File.ReadAllTextAsync(cacheFile);
+            var cached = System.Text.Json.JsonSerializer.Deserialize<CachedPackageDependencies>(json);
+            
+            if (cached != null && DateTime.UtcNow - cached.CachedAt < TimeSpan.FromDays(7))
+            {
+                // Verify assets still exist
+                var existingAssets = cached.AssetPaths
+                    .Where(File.Exists)
+                    .Select(path => new ReferenceAsset(path))
+                    .ToArray();
+                
+                if (existingAssets.Length == cached.AssetPaths.Count)
+                {
+                    var dependency = new Dependency(packageRef, NeededBy.Script, LoadStrategy.LoadInPlace);
+                    typeof(Dependency).GetProperty("Assets")?.SetValue(dependency, existingAssets);
+                    return dependency;
+                }
+            }
+
+            // Remove expired or invalid cache
+            File.Delete(cacheFile);
+        }
+        catch
+        {
+            // Ignore cache loading errors
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Save package dependency to cache
+    /// </summary>
+    private async Task SavePackageDependencyToCacheAsync(PackageReference packageRef, Dependency dependency)
+    {
+        try
+        {
+            var cached = new CachedPackageDependencies(
+                packageRef.PackageId,
+                packageRef.Version,
+                dependency.Assets.Select(a => a.Path).ToList(),
+                new List<string>(), // TODO: Add transitive dependencies if needed
+                DateTime.UtcNow
+            );
+
+            var cacheFile = GetPackageCacheFilePath(packageRef.PackageId, packageRef.Version);
+            var json = System.Text.Json.JsonSerializer.Serialize(cached, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(cacheFile, json);
+        }
+        catch
+        {
+            // Ignore cache saving errors
+        }
+    }
+
+    /// <summary>
+    /// Try to load cached data connection resources
+    /// </summary>
+    private async Task<CachedDataConnectionInfo?> TryLoadCachedDataConnectionAsync(string dcHash, string targetFramework)
+    {
+        try
+        {
+            var cacheFile = GetDataConnectionCacheFilePath(dcHash, targetFramework);
+            if (!File.Exists(cacheFile))
+                return null;
+
+            var json = await File.ReadAllTextAsync(cacheFile);
+            var cached = System.Text.Json.JsonSerializer.Deserialize<CachedDataConnectionInfo>(json);
+            
+            if (cached != null && DateTime.UtcNow - cached.CachedAt < TimeSpan.FromHours(24))
+            {
+                return cached;
+            }
+
+            // Remove expired cache
+            File.Delete(cacheFile);
+        }
+        catch
+        {
+            // Ignore cache loading errors
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Save data connection resources to cache
+    /// </summary>
+    private async Task SaveDataConnectionToCacheAsync(
+        string dcHash, 
+        string targetFramework, 
+        (SourceCodeCollection Code, IReadOnlyList<Reference> References, AssemblyImage? Assembly) resources)
+    {
+        try
+        {
+            var refData = resources.References.Select(r => new DependencyResolutionData(
+                r.GetType().Name,
+                SerializeReference(r),
+                NeededBy.Shared.ToString(),
+                LoadStrategy.DeployAndLoad.ToString(),
+                new List<string>() // References don't have asset paths at this level
+            )).ToList();
+
+            var cached = new CachedDataConnectionInfo(
+                dcHash,
+                targetFramework,
+                resources.Code.Select(c => c.ToCodeString()).ToList(),
+                refData,
+                resources.Assembly != null,
+                DateTime.UtcNow
+            );
+
+            var cacheFile = GetDataConnectionCacheFilePath(dcHash, targetFramework);
+            var json = System.Text.Json.JsonSerializer.Serialize(cached, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(cacheFile, json);
+        }
+        catch
+        {
+            // Ignore cache saving errors
+        }
+    }
+
+
+
+    /// <summary>
+    /// Serializes a reference object to string for caching
+    /// </summary>
+    private string SerializeReference(Reference reference)
+    {
+        return reference switch
+        {
+            PackageReference pkg => System.Text.Json.JsonSerializer.Serialize(new { pkg.PackageId, pkg.Version, pkg.Title }),
+            AssemblyFileReference file => System.Text.Json.JsonSerializer.Serialize(new { file.AssemblyPath }),
+            AssemblyImageReference => "AssemblyImage", // Cannot serialize, will need to regenerate
+            _ => reference.ToString() ?? ""
+        };
+    }
+
+    /// <summary>
+    /// Deserializes a reference object from cached string data
+    /// </summary>
+    private Reference? DeserializeReference(string referenceType, string referenceData)
+    {
+        try
+        {
+            if (referenceType == nameof(PackageReference))
+            {
+                using var doc = JsonDocument.Parse(referenceData);
+                var root = doc.RootElement;
+                var packageId = root.GetProperty("PackageId").GetString();
+                var version = root.GetProperty("Version").GetString();
+                var title = root.GetProperty("Title").GetString();
+                
+                if (packageId != null && version != null && title != null)
+                {
+                    return new PackageReference(packageId, title, version);
+                }
+            }
+            else if (referenceType == nameof(AssemblyFileReference))
+            {
+                using var doc = JsonDocument.Parse(referenceData);
+                var root = doc.RootElement;
+                var assemblyPath = root.GetProperty("AssemblyPath").GetString();
+                
+                if (assemblyPath != null)
+                {
+                    return new AssemblyFileReference(assemblyPath);
+                }
+            }
+            
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<(SourceCodeCollection Code, IReadOnlyList<Reference> References, AssemblyImage? Assembly)>
@@ -476,7 +825,7 @@ public partial class ClientServerScriptRunner
                 $"Could not find a {tfm} runtime with the name {frameworkName} and version {majorVersion}");
         }
 
-        var probingPathsJson = JsonSerializer.Serialize(probingPaths);
+        var probingPathsJson = System.Text.Json.JsonSerializer.Serialize(probingPaths);
 
         return $$"""
                  {

@@ -1,6 +1,17 @@
-# <div style="display: flex; align-items: center; gap: 7px"><img src="https://github.com/tareqimbasher/netpad/blob/main/src/Apps/NetPad.Apps.App/wwwroot/logo/circle/32x32.png?raw=true" /> NetPad</div>
+# `<div style="display: flex; align-items: center; gap: 7px"><img src="https://github.com/tareqimbasher/netpad/blob/main/src/Apps/NetPad.Apps.App/wwwroot/logo/circle/32x32.png?raw=true" />` NetPad (Performance Optimized Fork)`</div>`
 
-A cross-platform C# editor and playground.
+A cross-platform C# editor and playground with enhanced dependency caching and NuGet resolution.
+
+> **Note**: This is a fork of the original [NetPad project](https://github.com/tareqimbasher/NetPad) with performance optimizations for script dependency resolution.
+
+## 🚀 Performance Improvements
+
+This fork includes significant performance improvements for NuGet dependency handling:
+
+- **Per-Package Caching**: Individual NuGet packages are cached separately for optimal reuse across scripts
+- **Smart Cache Strategy**: Dependencies are loaded from cache when available, avoiding repeated downloads
+- **Data Connection Caching**: Database connection resources are cached to avoid regeneration
+- **Async Parallel Processing**: Uses Task.WhenAll for concurrent dependency loading instead of blocking operations
 
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/tareqimbasher/NetPad/build.yml)](https://github.com/tareqimbasher/NetPad/actions)
 [![GitHub Release](https://img.shields.io/github/v/release/tareqimbasher/NetPad?color=%23097bbb)](https://github.com/tareqimbasher/NetPad/releases/latest)
@@ -26,7 +37,7 @@ simple.
 
 See [Features](https://github.com/tareqimbasher/NetPad?tab=readme-ov-file#features-rocket).
 
-#### If you like this project, please star it :star2: and consider [sponsoring](https://github.com/sponsors/tareqimbasher)!
+#### If you like this project, please star it 🌟 and consider [sponsoring](https://github.com/sponsors/tareqimbasher)!
 
 ## Motivation
 
@@ -69,8 +80,8 @@ become the main package. At which point, the Electron version will be deprecated
 
 These packages are maintained by community members.
 
-| Installer                                                                                                                                                     | Channel    | Command                                              |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|------------------------------------------------------|
+| Installer                                                                                                                                                | Channel          | Command                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------ |
 | [![AUR Version](https://img.shields.io/aur/version/netpad-bin)](https://aur.archlinux.org/packages/netpad-bin)                                                | **stable** | `yay -S netpad-bin`                                  |
 | [![WinGet Package Version](https://img.shields.io/winget/v/TareqImbasher.NetPad?color=%23097bbb)](https://winstall.app/apps/TareqImbasher.NetPad)             | **stable** | `winget install --id=TareqImbasher.NetPad  -e`       |
 | [![WinGet Package Version](https://img.shields.io/winget/v/TareqImbasher.NetPad.vNext?color=%23097bbb)](https://winstall.app/apps/TareqImbasher.NetPad.vNext) | **vNext**  | `winget install --id=TareqImbasher.NetPad.vNext  -e` |
@@ -96,40 +107,67 @@ about NetPad.
 See the [Troubleshooting](https://github.com/tareqimbasher/NetPad/wiki/Troubleshooting) section of
 the Wiki.
 
+## About This Fork
+
+This is a performance-optimized fork of NetPad that introduces intelligent dependency caching to improve script execution startup times.
+
+### Key Changes
+
+- **Enhanced Dependency Caching**: Added smart caching mechanism in `ClientServerScriptRunner.Setup.cs`
+- **Cache Invalidation Strategy**: Implemented hash-based cache keys that automatically invalidate when dependencies change
+- **Performance Improvements**: Significant reduction in script compilation time for complex dependency graphs
+
+### Original Project
+
+This fork is based on the excellent work by [Tareq Imbasher](https://github.com/tareqimbasher) and the NetPad community.
+For the original project, please visit: [https://github.com/tareqimbasher/NetPad](https://github.com/tareqimbasher/NetPad)
+
 ## Contribution & Support
 
 All Pull Requests, feedback and contributions are welcome! Please read
 the [Contributing guidelines](./CONTRIBUTING.md) for more information about how to contribute and
 build/run the project.
 
-A special thanks to NetPad's wonderful <a href="https://github.com/sponsors/tareqimbasher">
-sponsors</a>. Sponsorships help pay for macOS builds and cross-platform testing and helps me
+### Contributing to This Fork
+
+If you'd like to contribute to the performance optimizations or suggest new improvements:
+
+1. Fork this repository
+2. Create a feature branch for your changes
+3. Test your changes thoroughly
+4. Submit a pull request with a clear description of the improvements
+
+For general NetPad issues and feature requests, please consider contributing to the
+[original project](https://github.com/tareqimbasher/NetPad).
+
+A special thanks to NetPad's wonderful `<a href="https://github.com/sponsors/tareqimbasher">`
+sponsors `</a>`. Sponsorships help pay for macOS builds and cross-platform testing and helps me
 maintain this project.
 
-<a href="https://github.com/mattjcowan"><img src="https://github.com/mattjcowan.png" width="50px" alt="mattjcowan" /></a>
-&nbsp;&nbsp;<a href="https://github.com/lpreiner"><img src="https://github.com/lpreiner.png" width="50px" alt="lpreiner" /></a>
-&nbsp;&nbsp;<a href="https://github.com/ChristopherHaws"><img src="https://github.com/ChristopherHaws.png" width="50px" alt="ChristopherHaws" /></a>
-&nbsp;&nbsp;<a href="https://github.com/OddSkancke"><img src="https://github.com/OddSkancke.png" width="50px" alt="OddSkancke" /></a>
-&nbsp;&nbsp;<a href="https://github.com/SimonNyvall"><img src="https://github.com/SimonNyvall.png" width="50px" alt="SimonNyvall" /></a>
+`<a href="https://github.com/mattjcowan"><img src="https://github.com/mattjcowan.png" width="50px" alt="mattjcowan" />``</a>`
+&nbsp;&nbsp;`<a href="https://github.com/lpreiner"><img src="https://github.com/lpreiner.png" width="50px" alt="lpreiner" />``</a>`
+&nbsp;&nbsp;`<a href="https://github.com/ChristopherHaws"><img src="https://github.com/ChristopherHaws.png" width="50px" alt="ChristopherHaws" />``</a>`
+&nbsp;&nbsp;`<a href="https://github.com/OddSkancke"><img src="https://github.com/OddSkancke.png" width="50px" alt="OddSkancke" />``</a>`
+&nbsp;&nbsp;`<a href="https://github.com/SimonNyvall"><img src="https://github.com/SimonNyvall.png" width="50px" alt="SimonNyvall" />``</a>`
 &nbsp;&nbsp;
 
 If you enjoy using NetPad and would like to support its continued development,
 consider [sponsoring](https://github.com/sponsors/tareqimbasher) the project. A small contribution
 helps immensely with maintenance and the addition of new features.
-Thank you for your support! :heart:
+Thank you for your support! ❤️
 
 ## Discord
 
 Join the [Discord server](https://discord.gg/FrgzNBYQFW) to collaborate, ask questions and get the
 latest announcements!
 
-## Features :rocket:
+## Features 🚀
 
 * The basics:
-    * Write, save and run your own scripts.
-    * Manage namespaces.
-    * Standard code editor features powered by Monaco editor.
-    * Auto-open unsaved scripts from previous session on launch.
+  * Write, save and run your own scripts.
+  * Manage namespaces.
+  * Standard code editor features powered by Monaco editor.
+  * Auto-open unsaved scripts from previous session on launch.
 * Dump complex objects to the results console and export results to Excel or HTML.
 * Choose the .NET SDK version you want to use per script.
 * Add database connections and query them with LINQ or T-SQL.
@@ -138,22 +176,22 @@ latest announcements!
 * Syntax Tree Visualizer.
 * User-defined results styling.
 * LSP powered by OmniSharp:
-    * Code Completion (Intellisense)
-    * Semantic Highlighting
-    * CodeLens
-    * Inlay Hints
-    * Hover for Documentation
-    * Go-to implementation
-    * Find References
-    * Find Symbol
-    * Rename Symbol
-    * Action Suggestions
-    * Diagnostics
-    * Document Highlighting
-    * Contextual code folding
-    * Format document/selection/on-type
+  * Code Completion (Intellisense)
+  * Semantic Highlighting
+  * CodeLens
+  * Inlay Hints
+  * Hover for Documentation
+  * Go-to implementation
+  * Find References
+  * Find Symbol
+  * Rename Symbol
+  * Action Suggestions
+  * Diagnostics
+  * Document Highlighting
+  * Contextual code folding
+  * Format document/selection/on-type
 
-## Roadmap :construction:
+## Roadmap 🚧
 
 * Debugging
 * Support for more database providers (Oracle, Mongo...etc)
@@ -174,7 +212,7 @@ latest announcements!
 <br/>
 <br/>
 
-## Tech Stack :computer:
+## Tech Stack 💻
 
 * .NET
 * ElectronSharp ([github](https://github.com/theolivenbaum/electron-sharp)) for the Electron shell
@@ -195,7 +233,7 @@ and SignalR.
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for instructions on how to build and run NetPad from
 source. NetPad can be run as a desktop app or as a web application accessed with a web browser.
 
-## Resources :books::
+## Resources 📚:
 
 * Technical Docs: [Go](https://tareqimbasher.github.io/NetPad)
 * Build & RUn: [Go](./CONTRIBUTING.md)

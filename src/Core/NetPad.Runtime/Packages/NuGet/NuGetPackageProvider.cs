@@ -162,6 +162,12 @@ public class NuGetPackageProvider(
             sourceCacheContext,
             nugetLogger,
             cancellationToken);
+
+        // Cache dependency information right after package installation
+        await CacheDependencyInfoAfterInstallAsync(
+            packageIdentity, 
+            packageDependencyTree, 
+            dotNetFrameworkVersion);
     }
 
     public Task<PackageInstallInfo?> GetPackageInstallInfoAsync(string packageId, string packageVersion)
@@ -1082,4 +1088,68 @@ public class NuGetPackageProvider(
         var json = JsonSerializer.Serialize(info, true);
         File.WriteAllText(Path.Combine(installPath, PackageInstallInfoFileName), json);
     }
+
+    /// <summary>
+    /// Cache dependency information immediately after package installation
+    /// </summary>
+    private async Task CacheDependencyInfoAfterInstallAsync(
+        NugetPackageIdentity mainPackage,
+        PackageDependencyTree dependencyTree,
+        DotNetFrameworkVersion dotNetFrameworkVersion)
+    {
+        try
+        {
+            var allPackages = dependencyTree.GetAllPackages();
+            
+            foreach (var packageDep in allPackages)
+            {
+                try
+                {
+                    // Skip if package is not installed
+                    if (!IsInstalled(packageDep))
+                        continue;
+
+                    // Get package assets for caching
+                    var packageAssets = await GetCachedPackageAssetsAsync(
+                        packageDep.Id,
+                        packageDep.Version.ToString(),
+                        dotNetFrameworkVersion);
+
+                    if (packageAssets.Any())
+                    {
+                        // Create cache data with asset paths
+                        var cacheData = new CachedPackageDependencies(
+                            DateTime.UtcNow,
+                            packageAssets.Select(a => a.Path).ToList()
+                        );
+
+                        // Save to cache file
+                        var cacheDir = Path.Combine(settings.PackageCacheDirectoryPath, "PackageDependencies");
+                        Directory.CreateDirectory(cacheDir);
+                        
+                        var cacheFile = Path.Combine(cacheDir, $"{packageDep.Id}-{packageDep.Version}.json");
+                        var json = System.Text.Json.JsonSerializer.Serialize(cacheData);
+                        await File.WriteAllTextAsync(cacheFile, json);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Log but don't fail the installation if caching fails
+                    logger.LogWarning(ex, "Failed to cache dependency info for package {PackageId}:{Version}", 
+                        packageDep.Id, packageDep.Version);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log but don't fail the installation if dependency caching fails
+            logger.LogWarning(ex, "Failed to cache dependency information after installing package {PackageId}:{Version}", 
+                mainPackage.Id, mainPackage.Version);
+        }
+    }
+
+    /// <summary>
+    /// Cached package dependency information
+    /// </summary>
+    private record CachedPackageDependencies(DateTime CachedAt, List<string> AssetPaths);
 }
