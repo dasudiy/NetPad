@@ -1,4 +1,4 @@
-# `<div style="display: flex; align-items: center; gap: 7px"><img src="https://github.com/tareqimbasher/netpad/blob/main/src/Apps/NetPad.Apps.App/wwwroot/logo/circle/32x32.png?raw=true" />` NetPad (Performance Optimized Fork)`</div>`
+<div style="display: flex; align-items: center; gap: 7px"><img src="https://github.com/tareqimbasher/netpad/blob/main/src/Apps/NetPad.Apps.App/wwwroot/logo/circle/32x32.png?raw=true" /> NetPad (Performance Optimized Fork)</div>
 
 A cross-platform C# editor and playground with enhanced dependency caching and NuGet resolution.
 
